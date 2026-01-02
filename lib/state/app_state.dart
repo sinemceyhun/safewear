@@ -1,13 +1,17 @@
 import 'dart:async';
 import 'dart:math';
 
-import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 
 import '../models/sensor_sample.dart';
+import '../models/emergency_contact.dart';
 import '../services/ble_service.dart';
 import '../services/notification_service.dart';
 import '../services/permission_service.dart';
+import '../services/emergency_contacts_repo.dart';
+import '../services/emergency_action_service.dart';
+
 enum DataSource { mock, ble }
 
 class AlertEvent {
@@ -22,7 +26,7 @@ class Thresholds {
   int hrLow = 50;
   int hrHigh = 120;
   int spo2Low = 90;
-  double fallAccelMag = 2.7; // approx "g" magnitude threshold
+  double fallAccelMag = 2.7;
   int immobileSeconds = 25;
 
   Thresholds();
@@ -30,14 +34,17 @@ class Thresholds {
 
 class AppState extends ChangeNotifier {
   final NotificationService notificationService;
+
   final BleService _ble = BleService();
+  final EmergencyContactsRepo _contactsRepo = EmergencyContactsRepo();
+  final EmergencyActionService _actionSvc = EmergencyActionService();
 
   AppState({required this.notificationService});
 
   // Mode
   DataSource dataSource = DataSource.mock;
 
-  // BLE config (set these to match ESP32 later)
+  // BLE config
   String bleNameFilter = 'SafeWear';
   String bleServiceUuid = '0000ffe0-0000-1000-8000-00805f9b34fb';
   String bleNotifyCharUuid = '0000ffe1-0000-1000-8000-00805f9b34fb';
@@ -45,12 +52,10 @@ class AppState extends ChangeNotifier {
   // Runtime state
   bool scanning = false;
   List<ScanResult> scanResults = [];
-
   BluetoothConnectionState connectionState = BluetoothConnectionState.disconnected;
 
   SensorSample? latest;
   final thresholds = Thresholds();
-
   final List<AlertEvent> alerts = [];
 
   Timer? _mockTimer;
@@ -59,8 +64,38 @@ class AppState extends ChangeNotifier {
   double? _lastAccelMag;
   DateTime? _lastMovementTs;
 
+  // Emergency contacts
+  List<EmergencyContact> emergencyContacts = [];
+
   void start() {
+    // load contacts async without blocking UI
+    unawaited(_loadEmergencyContacts());
     _startMockIfNeeded();
+  }
+
+  Future<void> _loadEmergencyContacts() async {
+    emergencyContacts = await _contactsRepo.load();
+    notifyListeners();
+  }
+
+  // -------------------------
+  // Emergency contacts CRUD
+  // -------------------------
+  Future<void> addOrUpdateEmergencyContact(EmergencyContact c) async {
+    final idx = emergencyContacts.indexWhere((x) => x.id == c.id);
+    if (idx >= 0) {
+      emergencyContacts[idx] = c;
+    } else {
+      emergencyContacts.add(c);
+    }
+    await _contactsRepo.save(emergencyContacts);
+    notifyListeners();
+  }
+
+  Future<void> removeEmergencyContact(String id) async {
+    emergencyContacts.removeWhere((c) => c.id == id);
+    await _contactsRepo.save(emergencyContacts);
+    notifyListeners();
   }
 
   // -------------------------
@@ -93,7 +128,6 @@ class AppState extends ChangeNotifier {
       final hr = 65 + rnd.nextInt(50);
       final spo2 = 92 + rnd.nextInt(7);
 
-      // simulate accel mag around 1.0 with occasional spikes (fall)
       final spike = rnd.nextDouble() < 0.04;
       final az = spike ? (2.8 + rnd.nextDouble()) : (0.9 + rnd.nextDouble() * 0.3);
 
@@ -104,6 +138,7 @@ class AppState extends ChangeNotifier {
         ax: (rnd.nextDouble() - 0.5) * 0.1,
         ay: (rnd.nextDouble() - 0.5) * 0.1,
         az: az,
+        // gyro values (mock)
         gx: (rnd.nextDouble() - 0.5) * 2,
         gy: (rnd.nextDouble() - 0.5) * 2,
         gz: (rnd.nextDouble() - 0.5) * 2,
@@ -122,19 +157,12 @@ class AppState extends ChangeNotifier {
   // -------------------------
   // BLE
   // -------------------------
-  // -------------------------
-// BLE
-// -------------------------
   Future<void> startBleScan() async {
-    // Ensure we are in BLE mode
     if (dataSource != DataSource.ble) {
       await setDataSource(DataSource.ble);
     }
-
-    // Avoid double-start
     if (scanning) return;
 
-    // Runtime permissions (Android)
     await PermissionService.ensurePermissions();
 
     scanning = true;
@@ -154,7 +182,7 @@ class AppState extends ChangeNotifier {
         },
       );
 
-      // Match BleService.startScan timeout (6s) so UI stays "Scanning…" while scan is active
+      // Keep UI scanning state aligned to BleService's 6s scan timeout.
       Future.delayed(const Duration(seconds: 6), () {
         if (!scanning) return;
         scanning = false;
@@ -174,8 +202,11 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-
   Future<void> connectBle(ScanResult target) async {
+    if (scanning) {
+      await stopBleScan();
+    }
+
     final cfg = BleConfig(
       deviceNameFilter: bleNameFilter,
       serviceUuid: Guid(bleServiceUuid),
@@ -190,7 +221,15 @@ class AppState extends ChangeNotifier {
         notifyListeners();
       },
       onLine: (line) {
-        final sample = SensorSample.tryParseLine(line);
+        final trimmed = line.trim();
+
+        // Physical button trigger example: ESP32 sends "EMERGENCY\n"
+        if (trimmed == 'EMERGENCY') {
+          unawaited(triggerEmergency(reason: 'Wearable button'));
+          return;
+        }
+
+        final sample = SensorSample.tryParseLine(trimmed);
         if (sample != null) _onNewSample(sample);
       },
     );
@@ -201,6 +240,47 @@ class AppState extends ChangeNotifier {
     connectionState = BluetoothConnectionState.disconnected;
     notifyListeners();
   }
+
+  // -------------------------
+  // Emergency actions
+  // -------------------------
+  String buildEmergencyMessage({required String reason}) {
+    final hr = latest?.hr;
+    final spo2 = latest?.spo2;
+    final mag = latest?.accelMag;
+
+    return [
+      'SafeWear Emergency',
+      'Reason: $reason',
+      'Time: ${DateTime.now().toIso8601String()}',
+      'HR: ${hr ?? '-'}',
+      'SpO₂: ${spo2 ?? '-'}',
+      'AccelMag: ${mag?.toStringAsFixed(2) ?? '-'}',
+    ].join('\n');
+  }
+
+  Future<void> triggerEmergency({required String reason}) async {
+    final msg = buildEmergencyMessage(reason: reason);
+
+    alerts.insert(0, AlertEvent('EMERGENCY', msg));
+    notifyListeners();
+
+    await notificationService.showAlert(
+      title: 'SafeWear: EMERGENCY',
+      body: reason,
+    );
+  }
+
+  Future<void> emergencyCall(EmergencyContact c) => _actionSvc.call(c);
+
+  Future<void> emergencySms(EmergencyContact c, String message) => _actionSvc.sms(c, message);
+
+  Future<void> emergencyEmail(
+      EmergencyContact c, {
+        required String subject,
+        required String body,
+      }) =>
+      _actionSvc.email(c, subject: subject, body: body);
 
   // -------------------------
   // Alerts / detection
@@ -237,7 +317,7 @@ class AppState extends ChangeNotifier {
       final idle = DateTime.now().difference(_lastMovementTs!).inSeconds;
       if (idle >= thresholds.immobileSeconds) {
         _emitAlert('IMMOBILE', 'No movement for ${idle}s');
-        _lastMovementTs = DateTime.now(); // avoid spamming
+        _lastMovementTs = DateTime.now();
       }
     });
 

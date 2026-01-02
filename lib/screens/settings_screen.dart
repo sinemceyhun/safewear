@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../state/app_state.dart';
+import 'emergency_contacts_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -67,8 +68,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
           selected: {s.dataSource},
           onSelectionChanged: (set) => context.read<AppState>().setDataSource(set.first),
         ),
-        const SizedBox(height: 20),
 
+        const SizedBox(height: 20),
+        const Text('Emergency', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+        const SizedBox(height: 8),
+        Card(
+          child: ListTile(
+            title: const Text('Emergency Contacts'),
+            subtitle: Text('${s.emergencyContacts.length} contact(s)'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const EmergencyContactsScreen()),
+              );
+            },
+          ),
+        ),
+
+        const SizedBox(height: 20),
         const Text('BLE Config', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
         const SizedBox(height: 8),
         TextField(controller: nameFilter, decoration: const InputDecoration(labelText: 'Device name filter')),
