@@ -1,16 +1,19 @@
 # safewear
+SafeWear is a Flutter mobile app that can run with mock sensor data or connect to an ESP32 via BLE.
 
-A new Flutter project.
+## Requirements
+- Flutter: **3.38.5** (stable)
+- Dart: **3.10.4**
+- Android Studio (Android SDK + emulator) OR a real Android phone
+- iOS (optional): Xcode (macOS)
 
-## Getting Started
+Verify:
+```bash
+flutter --version
+flutter doctor
 
-This project is a starting point for a Flutter application.
+run it with:
 
-A few resources to get you started if this is your first Flutter project:
+flutter pub get
+flutter run
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
-
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
