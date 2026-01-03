@@ -16,11 +16,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late final TextEditingController svcUuid;
   late final TextEditingController chrUuid;
 
-  late final TextEditingController hrLow;
-  late final TextEditingController hrHigh;
-  late final TextEditingController spo2Low;
-  late final TextEditingController fallMag;
+  // Thresholds (SpO2 removed)
+  late final TextEditingController bpmLow;
+  late final TextEditingController bpmHigh;
+
+  // Gyro thresholds (manual show/hide)
   late final TextEditingController immobileSec;
+  late final TextEditingController gyroDeltaEps;
+  late final TextEditingController gyroAbsEps;
 
   @override
   void initState() {
@@ -31,11 +34,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
     svcUuid = TextEditingController(text: s.bleServiceUuid);
     chrUuid = TextEditingController(text: s.bleNotifyCharUuid);
 
-    hrLow = TextEditingController(text: s.thresholds.hrLow.toString());
-    hrHigh = TextEditingController(text: s.thresholds.hrHigh.toString());
-    spo2Low = TextEditingController(text: s.thresholds.spo2Low.toString());
-    fallMag = TextEditingController(text: s.thresholds.fallAccelMag.toString());
+    bpmLow = TextEditingController(text: s.thresholds.bpmLow.toStringAsFixed(0));
+    bpmHigh = TextEditingController(text: s.thresholds.bpmHigh.toStringAsFixed(0));
+
     immobileSec = TextEditingController(text: s.thresholds.immobileSeconds.toString());
+    gyroDeltaEps = TextEditingController(text: s.thresholds.gyroDeltaEps.toString());
+    gyroAbsEps = TextEditingController(text: s.thresholds.gyroAbsEps.toString());
   }
 
   @override
@@ -43,17 +47,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
     nameFilter.dispose();
     svcUuid.dispose();
     chrUuid.dispose();
-    hrLow.dispose();
-    hrHigh.dispose();
-    spo2Low.dispose();
-    fallMag.dispose();
+
+    bpmLow.dispose();
+    bpmHigh.dispose();
+
     immobileSec.dispose();
+    gyroDeltaEps.dispose();
+    gyroAbsEps.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     final s = context.watch<AppState>();
+    final showGyro = s.showGyroSettings; // MANUAL FLAG (no auto change)
 
     return ListView(
       padding: const EdgeInsets.all(16),
@@ -95,11 +102,47 @@ class _SettingsScreenState extends State<SettingsScreen> {
         const SizedBox(height: 20),
         const Text('Thresholds', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
         const SizedBox(height: 8),
-        TextField(controller: hrLow, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'HR low')),
-        TextField(controller: hrHigh, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'HR high')),
-        TextField(controller: spo2Low, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'SpO₂ low')),
-        TextField(controller: fallMag, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Fall accel magnitude')),
-        TextField(controller: immobileSec, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Immobile seconds')),
+
+        TextField(
+          controller: bpmLow,
+          keyboardType: TextInputType.number,
+          decoration: const InputDecoration(labelText: 'BPM low (optional alert)'),
+        ),
+        TextField(
+          controller: bpmHigh,
+          keyboardType: TextInputType.number,
+          decoration: const InputDecoration(labelText: 'BPM high (optional alert)'),
+        ),
+
+        const SizedBox(height: 12),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: const Text('Show gyro settings'),
+          value: showGyro,
+          onChanged: (v) => context.read<AppState>().setShowGyroSettings(v),
+        ),
+
+        if (showGyro) ...[
+          const SizedBox(height: 8),
+          const Text('Gyro-based Inactivity', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 8),
+
+          TextField(
+            controller: immobileSec,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(labelText: 'Immobile seconds'),
+          ),
+          TextField(
+            controller: gyroDeltaEps,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(labelText: 'Gyro delta epsilon'),
+          ),
+          TextField(
+            controller: gyroAbsEps,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(labelText: 'Gyro abs epsilon'),
+          ),
+        ],
 
         const SizedBox(height: 20),
         ElevatedButton(
@@ -110,11 +153,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
             st.bleServiceUuid = svcUuid.text.trim();
             st.bleNotifyCharUuid = chrUuid.text.trim();
 
-            st.thresholds.hrLow = int.tryParse(hrLow.text.trim()) ?? st.thresholds.hrLow;
-            st.thresholds.hrHigh = int.tryParse(hrHigh.text.trim()) ?? st.thresholds.hrHigh;
-            st.thresholds.spo2Low = int.tryParse(spo2Low.text.trim()) ?? st.thresholds.spo2Low;
-            st.thresholds.fallAccelMag = double.tryParse(fallMag.text.trim()) ?? st.thresholds.fallAccelMag;
-            st.thresholds.immobileSeconds = int.tryParse(immobileSec.text.trim()) ?? st.thresholds.immobileSeconds;
+            st.thresholds.bpmLow = double.tryParse(bpmLow.text.trim()) ?? st.thresholds.bpmLow;
+            st.thresholds.bpmHigh = double.tryParse(bpmHigh.text.trim()) ?? st.thresholds.bpmHigh;
+
+            if (st.showGyroSettings) {
+              st.thresholds.immobileSeconds =
+                  int.tryParse(immobileSec.text.trim()) ?? st.thresholds.immobileSeconds;
+              st.thresholds.gyroDeltaEps =
+                  double.tryParse(gyroDeltaEps.text.trim()) ?? st.thresholds.gyroDeltaEps;
+              st.thresholds.gyroAbsEps =
+                  double.tryParse(gyroAbsEps.text.trim()) ?? st.thresholds.gyroAbsEps;
+            }
 
             st.notifyListeners();
             ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Saved')));

@@ -10,7 +10,6 @@ class NotificationService {
   }
 
   Future<void> requestPermissionIfNeeded() async {
-    // Android 13+ runtime notification permission
     await _plugin
         .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
         ?.requestNotificationsPermission();
@@ -25,7 +24,9 @@ class NotificationService {
       priority: Priority.high,
     );
 
-    final id = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    // Avoid ID collisions
+    final id = DateTime.now().millisecondsSinceEpoch;
+
     await _plugin.show(id, title, body, const NotificationDetails(android: androidDetails));
   }
 }

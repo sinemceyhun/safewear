@@ -18,29 +18,40 @@ class MockSensorStream implements SensorStream {
   Stream<SensorSample> stream() => _ctrl.stream;
 
   void start() {
-    _t = Timer.periodic(const Duration(milliseconds: 500), (_) {
+    _t = Timer.periodic(const Duration(milliseconds: 700), (_) {
       final now = DateTime.now();
 
-      // Mostly stable accel around 1g, sometimes spike to simulate "fall"
-      final spike = _rng.nextDouble() < 0.02;
-      final ax = 0.02 * (_rng.nextDouble() - 0.5);
-      final ay = 0.02 * (_rng.nextDouble() - 0.5);
-      final az = spike ? 3.2 : 1.0 + 0.02 * (_rng.nextDouble() - 0.5);
+      // BPM around 70-100 with fractional part
+      final bpm = 70 + _rng.nextInt(31) + _rng.nextDouble();
 
-      final hr = 70 + _rng.nextInt(10) - 5;
-      final spo2 = 97 + _rng.nextInt(3) - 1;
+      // Rare alarms
+      final r = _rng.nextDouble();
+      final alarm = (r < 0.01)
+          ? 1 // manual
+          : (r < 0.02)
+          ? 2 // fall
+          : 0;
+
+      // Sometimes provide gyro, sometimes not
+      final includeGyro = _rng.nextDouble() < 0.6;
+
+      // If includeGyro=false -> inactivity should never trigger (correct behavior)
+      // If includeGyro=true but small changes -> can simulate immobility.
+      final moving = _rng.nextDouble() < 0.35;
+
+      final gx = includeGyro ? (moving ? (_rng.nextDouble() - 0.5) * 0.8 : 0.01) : null;
+      final gy = includeGyro ? (moving ? (_rng.nextDouble() - 0.5) * 0.8 : 0.01) : null;
+      final gz = includeGyro ? (moving ? (_rng.nextDouble() - 0.5) * 0.8 : 0.01) : null;
 
       _ctrl.add(
         SensorSample(
           ts: now,
-          ax: ax,
-          ay: ay,
-          az: az,
-          gx: 0,
-          gy: 0,
-          gz: 0,
-          hr: hr,
-          spo2: spo2,
+          bpm: bpm,
+          alarm: alarm,
+          gx: gx,
+          gy: gy,
+          gz: gz,
+          raw: const {'source': 'mock'},
         ),
       );
     });

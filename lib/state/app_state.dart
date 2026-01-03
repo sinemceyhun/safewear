@@ -22,12 +22,22 @@ class AlertEvent {
   AlertEvent(this.type, this.message) : ts = DateTime.now();
 }
 
+/// Thresholds (SpO₂ removed)
 class Thresholds {
-  int hrLow = 50;
-  int hrHigh = 120;
-  int spo2Low = 90;
-  double fallAccelMag = 2.7;
+  // Optional HR alerts from bpm (still useful even if wearable doesn't send spo2)
+  double bpmLow = 45;
+  double bpmHigh = 140;
+
+  // Inactivity detection (enabled only when gyro arrives)
   int immobileSeconds = 25;
+
+  // Motion detection based on gyro deltas
+  // If gyro changes above this, consider as movement.
+  double gyroDeltaEps = 0.15;
+
+  // If absolute gyro magnitude is above this, consider as movement.
+  // Helps when sample-to-sample delta is small but device is rotating steadily.
+  double gyroAbsEps = 0.25;
 
   Thresholds();
 }
@@ -44,10 +54,10 @@ class AppState extends ChangeNotifier {
   // Mode
   DataSource dataSource = DataSource.mock;
 
-  // BLE config
-  String bleNameFilter = 'SafeWear';
-  String bleServiceUuid = '0000ffe0-0000-1000-8000-00805f9b34fb';
-  String bleNotifyCharUuid = '0000ffe1-0000-1000-8000-00805f9b34fb';
+  // BLE config (set these to your actual UUIDs from your screenshots)
+  String bleNameFilter = 'ESP32_FALL_MONITOR';
+  String bleServiceUuid = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
+  String bleNotifyCharUuid = '6e400003-b5a3-f393-e0a9-e50e24dcca9e';
 
   // Runtime state
   bool scanning = false;
@@ -58,20 +68,44 @@ class AppState extends ChangeNotifier {
   final thresholds = Thresholds();
   final List<AlertEvent> alerts = [];
 
-  Timer? _mockTimer;
+  // Motion / inactivity state (gyro-based)
+  bool _motionAvailable = false;
+  DateTime? _lastMovementTs;
+  double? _lastGx, _lastGy, _lastGz;
   Timer? _immobileTimer;
 
-  double? _lastAccelMag;
-  DateTime? _lastMovementTs;
+  // Wearable alarm transition tracking
+  int _lastAlarmCode = 0;
+  DateTime? _lastEmergencyTs;
+
+  // Alert spam control
+  final Map<String, DateTime> _lastAlertTs = {};
 
   // Emergency contacts
   List<EmergencyContact> emergencyContacts = [];
 
+  // --- BPM chart history ---
+  static const int bpmHistoryMax = 120; // ~2 minutes if you get ~1Hz samples
+  final List<double> bpmHistory = [];
+  final List<DateTime> bpmHistoryTs = [];
+
+
   void start() {
-    // load contacts async without blocking UI
     unawaited(_loadEmergencyContacts());
     _startMockIfNeeded();
   }
+  // gyro settings
+  bool get gyroAvailable => latest?.hasGyro == true;
+
+  // Settings UI control (manual)
+  bool showGyroSettings = false;
+
+  void setShowGyroSettings(bool v) {
+    if (showGyroSettings == v) return;
+    showGyroSettings = v;
+    notifyListeners();
+  }
+
 
   Future<void> _loadEmergencyContacts() async {
     emergencyContacts = await _contactsRepo.load();
@@ -108,6 +142,8 @@ class AppState extends ChangeNotifier {
     await disconnectBle();
     _stopMock();
 
+    _resetMotionState();
+
     if (dataSource == DataSource.mock) {
       _startMockIfNeeded();
     }
@@ -115,33 +151,42 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  void _resetMotionState() {
+    _motionAvailable = false;
+    _lastMovementTs = null;
+    _lastGx = _lastGy = _lastGz = null;
+    _immobileTimer?.cancel();
+    _immobileTimer = null;
+  }
+
   // -------------------------
-  // Mock data
+  // Mock data (for UI/rules testing)
   // -------------------------
+  Timer? _mockTimer;
+
   void _startMockIfNeeded() {
     if (dataSource != DataSource.mock) return;
 
     _mockTimer?.cancel();
     final rnd = Random();
 
-    _mockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      final hr = 65 + rnd.nextInt(50);
-      final spo2 = 92 + rnd.nextInt(7);
+    _mockTimer = Timer.periodic(const Duration(milliseconds: 800), (_) {
+      final bpm = 65 + rnd.nextInt(40) + rnd.nextDouble(); // 65-105.x
+      final alarm = (rnd.nextDouble() < 0.02) ? 2 : 0;     // rare fall alarm
 
-      final spike = rnd.nextDouble() < 0.04;
-      final az = spike ? (2.8 + rnd.nextDouble()) : (0.9 + rnd.nextDouble() * 0.3);
+      // Sometimes include gyro to exercise inactivity
+      final includeGyro = rnd.nextDouble() < 0.6;
+      final gx = includeGyro ? (rnd.nextDouble() - 0.5) * 0.6 : null;
+      final gy = includeGyro ? (rnd.nextDouble() - 0.5) * 0.6 : null;
+      final gz = includeGyro ? (rnd.nextDouble() - 0.5) * 0.6 : null;
 
       final sample = SensorSample(
         ts: DateTime.now(),
-        hr: hr,
-        spo2: spo2,
-        ax: (rnd.nextDouble() - 0.5) * 0.1,
-        ay: (rnd.nextDouble() - 0.5) * 0.1,
-        az: az,
-        // gyro values (mock)
-        gx: (rnd.nextDouble() - 0.5) * 2,
-        gy: (rnd.nextDouble() - 0.5) * 2,
-        gz: (rnd.nextDouble() - 0.5) * 2,
+        bpm: bpm,
+        alarm: alarm,
+        gx: gx,
+        gy: gy,
+        gz: gz,
         raw: const {'source': 'mock'},
       );
 
@@ -176,13 +221,13 @@ class AppState extends ChangeNotifier {
           scanResults = results;
           notifyListeners();
         },
-        onError: (e) {
+        onError: (_) {
           scanning = false;
           notifyListeners();
         },
       );
 
-      // Keep UI scanning state aligned to BleService's 6s scan timeout.
+      // Align UI scanning state with BleService timeout (6s)
       Future.delayed(const Duration(seconds: 6), () {
         if (!scanning) return;
         scanning = false;
@@ -203,9 +248,9 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> connectBle(ScanResult target) async {
-    if (scanning) {
-      await stopBleScan();
-    }
+    if (scanning) await stopBleScan();
+
+    _resetMotionState();
 
     final cfg = BleConfig(
       deviceNameFilter: bleNameFilter,
@@ -221,15 +266,7 @@ class AppState extends ChangeNotifier {
         notifyListeners();
       },
       onLine: (line) {
-        final trimmed = line.trim();
-
-        // Physical button trigger example: ESP32 sends "EMERGENCY\n"
-        if (trimmed == 'EMERGENCY') {
-          unawaited(triggerEmergency(reason: 'Wearable button'));
-          return;
-        }
-
-        final sample = SensorSample.tryParseLine(trimmed);
+        final sample = SensorSample.tryParseLine(line);
         if (sample != null) _onNewSample(sample);
       },
     );
@@ -238,6 +275,7 @@ class AppState extends ChangeNotifier {
   Future<void> disconnectBle() async {
     await _ble.disconnect();
     connectionState = BluetoothConnectionState.disconnected;
+    _resetMotionState();
     notifyListeners();
   }
 
@@ -245,17 +283,18 @@ class AppState extends ChangeNotifier {
   // Emergency actions
   // -------------------------
   String buildEmergencyMessage({required String reason}) {
-    final hr = latest?.hr;
-    final spo2 = latest?.spo2;
-    final mag = latest?.accelMag;
+    final bpm = latest?.bpm;
+    final alarm = latest?.alarm;
+
+    final gmag = latest?.gyroMag;
 
     return [
       'SafeWear Emergency',
       'Reason: $reason',
       'Time: ${DateTime.now().toIso8601String()}',
-      'HR: ${hr ?? '-'}',
-      'SpO₂: ${spo2 ?? '-'}',
-      'AccelMag: ${mag?.toStringAsFixed(2) ?? '-'}',
+      'BPM: ${bpm != null ? bpm.toStringAsFixed(1) : '-'}',
+      'Alarm: ${alarm ?? '-'}',
+      'GyroMag: ${gmag != null ? gmag.toStringAsFixed(3) : '-'}',
     ].join('\n');
   }
 
@@ -272,9 +311,7 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> emergencyCall(EmergencyContact c) => _actionSvc.call(c);
-
   Future<void> emergencySms(EmergencyContact c, String message) => _actionSvc.sms(c, message);
-
   Future<void> emergencyEmail(
       EmergencyContact c, {
         required String subject,
@@ -285,41 +322,110 @@ class AppState extends ChangeNotifier {
   // -------------------------
   // Alerts / detection
   // -------------------------
-  void _onNewSample(SensorSample s) {
-    latest = s;
+  bool _allowEmit(String type, {int minSeconds = 10}) {
+    final now = DateTime.now();
+    final last = _lastAlertTs[type];
+    if (last == null) {
+      _lastAlertTs[type] = now;
+      return true;
+    }
+    if (now.difference(last).inSeconds >= minSeconds) {
+      _lastAlertTs[type] = now;
+      return true;
+    }
+    return false;
+  }
 
-    final mag = s.accelMag;
-    if (mag != null) {
-      if (_lastAccelMag == null || (mag - _lastAccelMag!).abs() > 0.03) {
-        _lastMovementTs = DateTime.now();
-      }
-      _lastAccelMag = mag;
+  void _handleWearableAlarmTransition(SensorSample s) {
+    final alarm = s.alarm;
 
-      if (mag >= thresholds.fallAccelMag) {
-        _emitAlert('FALL', 'High acceleration magnitude detected: ${mag.toStringAsFixed(2)}');
-      }
+    // Trigger only on transition
+    if (alarm == _lastAlarmCode) return;
+    _lastAlarmCode = alarm;
+
+    if (alarm == 0) return;
+
+    final reason = (alarm == 1)
+        ? 'Wearable: Manuel Acil (Buton)'
+        : 'Wearable: Düşme Algılandı';
+
+    // Cooldown 10s
+    final now = DateTime.now();
+    final canFire = _lastEmergencyTs == null || now.difference(_lastEmergencyTs!).inSeconds >= 10;
+    if (!canFire) return;
+
+    _lastEmergencyTs = now;
+    unawaited(triggerEmergency(reason: reason));
+  }
+
+  void _updateMotionFromGyroIfPresent(SensorSample s) {
+    if (!s.hasGyro) return;
+
+    _motionAvailable = true;
+
+    final gx = s.gx!, gy = s.gy!, gz = s.gz!;
+    final gmag = s.gyroMag ?? 0.0;
+
+    // Compute delta magnitude vs last sample (vector delta)
+    double delta = 0.0;
+    if (_lastGx != null && _lastGy != null && _lastGz != null) {
+      final dx = gx - _lastGx!;
+      final dy = gy - _lastGy!;
+      final dz = gz - _lastGz!;
+      delta = sqrt(dx * dx + dy * dy + dz * dz);
     }
 
-    if (s.hr != null) {
-      if (s.hr! < thresholds.hrLow) {
-        _emitAlert('HR_LOW', 'Heart rate low: ${s.hr}');
-      } else if (s.hr! > thresholds.hrHigh) {
-        _emitAlert('HR_HIGH', 'Heart rate high: ${s.hr}');
-      }
+    final moved = (delta >= thresholds.gyroDeltaEps) || (gmag >= thresholds.gyroAbsEps);
+
+    if (moved) {
+      _lastMovementTs = DateTime.now();
+    } else {
+      _lastMovementTs ??= DateTime.now(); // initialize once
     }
 
-    if (s.spo2 != null && s.spo2! < thresholds.spo2Low) {
-      _emitAlert('SPO2_LOW', 'SpO₂ low: ${s.spo2}%');
-    }
+    _lastGx = gx;
+    _lastGy = gy;
+    _lastGz = gz;
 
+    // Start inactivity timer only after gyro is available
     _immobileTimer ??= Timer.periodic(const Duration(seconds: 2), (_) {
-      if (_lastMovementTs == null) return;
+      if (!_motionAvailable || _lastMovementTs == null) return;
+
       final idle = DateTime.now().difference(_lastMovementTs!).inSeconds;
       if (idle >= thresholds.immobileSeconds) {
-        _emitAlert('IMMOBILE', 'No movement for ${idle}s');
+        if (_allowEmit('IMMOBILE', minSeconds: thresholds.immobileSeconds)) {
+          unawaited(_emitAlert('IMMOBILE', 'No movement (gyro) for ${idle}s'));
+        }
+        // Reset baseline after firing to avoid repeats
         _lastMovementTs = DateTime.now();
       }
     });
+  }
+
+  void _onNewSample(SensorSample s) {
+    latest = s;
+    // Record BPM history for chart
+    bpmHistory.add(s.bpm);
+    bpmHistoryTs.add(s.ts);
+    if (bpmHistory.length > bpmHistoryMax) {
+      bpmHistory.removeAt(0);
+      bpmHistoryTs.removeAt(0);
+    }
+
+    // 1) Wearable alarm (authoritative)
+    _handleWearableAlarmTransition(s);
+
+    // 2) Optional: HR alerts based on bpm (still useful)
+    if (_allowEmit('BPM_CHECK', minSeconds: 1)) {
+      if (s.bpm <= thresholds.bpmLow && _allowEmit('HR_LOW', minSeconds: 15)) {
+        unawaited(_emitAlert('HR_LOW', 'Low BPM: ${s.bpm.toStringAsFixed(1)}'));
+      } else if (s.bpm >= thresholds.bpmHigh && _allowEmit('HR_HIGH', minSeconds: 15)) {
+        unawaited(_emitAlert('HR_HIGH', 'High BPM: ${s.bpm.toStringAsFixed(1)}'));
+      }
+    }
+
+    // 3) Optional: Inactivity (only if gyro exists)
+    _updateMotionFromGyroIfPresent(s);
 
     notifyListeners();
   }
