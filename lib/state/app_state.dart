@@ -55,7 +55,7 @@ class AppState extends ChangeNotifier {
   DataSource dataSource = DataSource.mock;
 
   // BLE config (set these to your actual UUIDs from your screenshots)
-  String bleNameFilter = 'ESP32_FALL_MONITOR';
+  String bleNameFilter = '';
   String bleServiceUuid = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
   String bleNotifyCharUuid = '6e400003-b5a3-f393-e0a9-e50e24dcca9e';
 
