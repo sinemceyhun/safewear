@@ -308,6 +308,37 @@ class AppState extends ChangeNotifier {
       title: 'SafeWear: EMERGENCY',
       body: reason,
     );
+
+    // Otomatik SMS gönder: SMS yetkisi olan acil durum kişilerine
+    await _sendEmergencySmsToContacts(reason: reason);
+  }
+
+  /// Acil durum kişilerine SMS uygulamasını açar (mesaj önceden doldurulmuş olur)
+  /// Kullanıcı SMS'i gözden geçirip göndermek için onay vermelidir (güvenlik için)
+  Future<void> _sendEmergencySmsToContacts({required String reason}) async {
+    // SMS gönderebilecek kişileri filtrele
+    final smsContacts = emergencyContacts.where((c) {
+      return c.canSms && 
+             (c.phone?.trim().isNotEmpty ?? false);
+    }).toList();
+
+    if (smsContacts.isEmpty) return;
+
+    final message = buildEmergencyMessage(reason: reason);
+
+    // Her SMS destekleyen kişi için SMS uygulamasını aç
+    // Not: Birden fazla kişi varsa, her biri için ayrı SMS uygulaması açılır
+    // Kullanıcı her mesajı gözden geçirip göndermek için onay vermelidir
+    for (final contact in smsContacts) {
+      try {
+        await _actionSvc.sms(contact, message);
+        // Her SMS uygulaması açılması arasında kısa bir gecikme
+        await Future.delayed(const Duration(milliseconds: 300));
+      } catch (e) {
+        // SMS uygulaması açma hatası olsa bile diğer kişilere devam et
+        print('Failed to open SMS app for ${contact.name}: $e');
+      }
+    }
   }
 
   Future<void> emergencyCall(EmergencyContact c) => _actionSvc.call(c);

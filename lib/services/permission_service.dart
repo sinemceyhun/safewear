@@ -23,6 +23,7 @@ class PermissionService {
       btScan,
       btConnect,
       notifications,
+      // SMS permission removed - we only open SMS app, don't send directly
     ];
 
     // If the OS doesn't support bluetoothScan/bluetoothConnect (older Android),

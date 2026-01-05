@@ -10,10 +10,14 @@ class EmergencyActionService {
     await _launch(uri);
   }
 
+  /// Opens SMS app with pre-filled message (user can review and send manually)
+  /// Note: For safety, SMS is not sent automatically. User must confirm.
   Future<void> sms(EmergencyContact c, String message) async {
     final phone = c.phone?.trim();
     if (phone == null || phone.isEmpty) return;
 
+    // Open SMS app with pre-filled message
+    // User must manually press send button (safer approach)
     final uri = Uri(
       scheme: 'sms',
       path: phone,
