@@ -62,7 +62,8 @@ class AppState extends ChangeNotifier {
   // Runtime state
   bool scanning = false;
   List<ScanResult> scanResults = [];
-  BluetoothConnectionState connectionState = BluetoothConnectionState.disconnected;
+  BluetoothConnectionState connectionState =
+      BluetoothConnectionState.disconnected;
 
   SensorSample? latest;
   final thresholds = Thresholds();
@@ -89,11 +90,11 @@ class AppState extends ChangeNotifier {
   final List<double> bpmHistory = [];
   final List<DateTime> bpmHistoryTs = [];
 
-
   void start() {
     unawaited(_loadEmergencyContacts());
     _startMockIfNeeded();
   }
+
   // gyro settings
   bool get gyroAvailable => latest?.hasGyro == true;
 
@@ -105,7 +106,6 @@ class AppState extends ChangeNotifier {
     showGyroSettings = v;
     notifyListeners();
   }
-
 
   Future<void> _loadEmergencyContacts() async {
     emergencyContacts = await _contactsRepo.load();
@@ -172,7 +172,7 @@ class AppState extends ChangeNotifier {
 
     _mockTimer = Timer.periodic(const Duration(milliseconds: 800), (_) {
       final bpm = 65 + rnd.nextInt(40) + rnd.nextDouble(); // 65-105.x
-      final alarm = (rnd.nextDouble() < 0.02) ? 2 : 0;     // rare fall alarm
+      final alarm = (rnd.nextDouble() < 0.02) ? 2 : 0; // rare fall alarm
 
       // Sometimes include gyro to exercise inactivity
       final includeGyro = rnd.nextDouble() < 0.6;
@@ -284,12 +284,11 @@ class AppState extends ChangeNotifier {
   }
 
   // -------------------------
-  // Emergency actions
+  // Emergency message + HTML email building
   // -------------------------
   String buildEmergencyMessage({required String reason}) {
     final bpm = latest?.bpm;
     final alarm = latest?.alarm;
-
     final gmag = latest?.gyroMag;
 
     return [
@@ -302,6 +301,90 @@ class AppState extends ChangeNotifier {
     ].join('\n');
   }
 
+  String _escapeHtml(String s) {
+    return s
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;');
+  }
+
+  String buildEmergencyEmailHtml({
+    required String reason,
+    required String detailsPlain,
+  }) {
+    final safeReason = _escapeHtml(reason);
+    final safeDetails = _escapeHtml(detailsPlain).replaceAll('\n', '<br>');
+
+    final now = DateTime.now();
+    final timeStr =
+        '${now.day.toString().padLeft(2, '0')}.${now.month.toString().padLeft(2, '0')}.${now.year} '
+        '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
+
+    return '''
+<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+  <div style="background: linear-gradient(135deg, #FF1744, #D50000); color: white; padding: 18px; border-radius: 10px 10px 0 0;">
+    <h2 style="margin: 0;">🚨 SafeWear ACİL DURUM</h2>
+  </div>
+
+  <div style="background: #f5f5f5; padding: 18px; border-radius: 0 0 10px 10px;">
+    <table style="width: 100%; border-collapse: collapse;">
+      <tr>
+        <td style="padding: 10px; border-bottom: 1px solid #ddd;"><b>Neden</b></td>
+        <td style="padding: 10px; border-bottom: 1px solid #ddd;">$safeReason</td>
+      </tr>
+      <tr>
+        <td style="padding: 10px; border-bottom: 1px solid #ddd;"><b>Zaman</b></td>
+        <td style="padding: 10px; border-bottom: 1px solid #ddd;">$timeStr</td>
+      </tr>
+      <tr>
+        <td style="padding: 10px; vertical-align: top;"><b>Detay</b></td>
+        <td style="padding: 10px;">$safeDetails</td>
+      </tr>
+    </table>
+
+    <p style="color: #666; font-size: 12px; margin-top: 16px; text-align: center;">
+      Bu mesaj SafeWear uygulaması tarafından otomatik gönderilmiştir.
+    </p>
+  </div>
+</div>
+''';
+  }
+
+  void _sendEmergencyEmailToAll({
+    required String reason,
+    required String detailsPlain,
+  }) {
+    // Cooldown (anti-spam)
+    if (!_allowEmit('EMAIL_EMERGENCY', minSeconds: 20)) return;
+
+    final contactsWithEmail = emergencyContacts
+        .where((c) => (c.email?.trim().isNotEmpty ?? false))
+        .toList();
+
+    if (contactsWithEmail.isEmpty) return;
+
+    final subject = '🚨 SafeWear ACİL DURUM: $reason';
+    final html = buildEmergencyEmailHtml(
+      reason: reason,
+      detailsPlain: detailsPlain,
+    );
+
+    // Send one-by-one (safe for any email service structure)
+    for (final c in contactsWithEmail) {
+      unawaited(
+        _actionSvc
+            .email(
+          c,
+          subject: subject,
+          bodyHtml: html, // ✅ IMPORTANT: bodyHtml
+        )
+            .catchError((e) {
+          debugPrint('[SafeWear] Email send failed to ${c.email}: $e');
+        }),
+      );
+    }
+  }
+
   Future<void> triggerEmergency({required String reason}) async {
     final msg = buildEmergencyMessage(reason: reason);
 
@@ -312,16 +395,28 @@ class AppState extends ChangeNotifier {
       title: 'SafeWear: EMERGENCY',
       body: reason,
     );
+
+    // ✅ REAL EMAIL (SMTP)
+    _sendEmergencyEmailToAll(
+      reason: reason,
+      detailsPlain: msg,
+    );
   }
 
-  Future<void> emergencyCall(EmergencyContact c) => _actionSvc.call(c);
-  Future<void> emergencySms(EmergencyContact c, String message) => _actionSvc.sms(c, message);
+  // ✅ Only email manual send (no SMS, no call)
   Future<void> emergencyEmail(
       EmergencyContact c, {
         required String subject,
         required String body,
-      }) =>
-      _actionSvc.email(c, subject: subject, body: body);
+      }) {
+    final html = '<pre style="font-family: Arial, sans-serif;">${_escapeHtml(body)}</pre>';
+
+    return _actionSvc.email(
+      c,
+      subject: subject,
+      bodyHtml: html, // ✅ IMPORTANT: bodyHtml
+    );
+  }
 
   // -------------------------
   // Alerts / detection
@@ -355,7 +450,8 @@ class AppState extends ChangeNotifier {
 
     // Cooldown 10s
     final now = DateTime.now();
-    final canFire = _lastEmergencyTs == null || now.difference(_lastEmergencyTs!).inSeconds >= 10;
+    final canFire =
+        _lastEmergencyTs == null || now.difference(_lastEmergencyTs!).inSeconds >= 10;
     if (!canFire) return;
 
     _lastEmergencyTs = now;
@@ -379,7 +475,8 @@ class AppState extends ChangeNotifier {
       delta = sqrt(dx * dx + dy * dy + dz * dz);
     }
 
-    final moved = (delta >= thresholds.gyroDeltaEps) || (gmag >= thresholds.gyroAbsEps);
+    final moved =
+        (delta >= thresholds.gyroDeltaEps) || (gmag >= thresholds.gyroAbsEps);
 
     if (moved) {
       _lastMovementTs = DateTime.now();
@@ -408,6 +505,7 @@ class AppState extends ChangeNotifier {
 
   void _onNewSample(SensorSample s) {
     latest = s;
+
     // Record BPM history for chart
     bpmHistory.add(s.bpm);
     bpmHistoryTs.add(s.ts);
@@ -421,10 +519,13 @@ class AppState extends ChangeNotifier {
 
     // 2) Optional: HR alerts based on bpm (still useful)
     if (_allowEmit('BPM_CHECK', minSeconds: 1)) {
-      if (s.bpm <= thresholds.bpmLow && _allowEmit('HR_LOW', minSeconds: 15)) {
+      if (s.bpm <= thresholds.bpmLow &&
+          _allowEmit('HR_LOW', minSeconds: 15)) {
         unawaited(_emitAlert('HR_LOW', 'Low BPM: ${s.bpm.toStringAsFixed(1)}'));
-      } else if (s.bpm >= thresholds.bpmHigh && _allowEmit('HR_HIGH', minSeconds: 15)) {
-        unawaited(_emitAlert('HR_HIGH', 'High BPM: ${s.bpm.toStringAsFixed(1)}'));
+      } else if (s.bpm >= thresholds.bpmHigh &&
+          _allowEmit('HR_HIGH', minSeconds: 15)) {
+        unawaited(
+            _emitAlert('HR_HIGH', 'High BPM: ${s.bpm.toStringAsFixed(1)}'));
       }
     }
 

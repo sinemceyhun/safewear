@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../state/app_state.dart';
@@ -16,14 +17,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late final TextEditingController svcUuid;
   late final TextEditingController chrUuid;
 
-  // Thresholds (SpO2 removed)
+  // Thresholds (integer-only)
   late final TextEditingController bpmLow;
   late final TextEditingController bpmHigh;
-
-  // Gyro thresholds (manual show/hide)
-  late final TextEditingController immobileSec;
-  late final TextEditingController gyroDeltaEps;
-  late final TextEditingController gyroAbsEps;
 
   @override
   void initState() {
@@ -34,12 +30,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     svcUuid = TextEditingController(text: s.bleServiceUuid);
     chrUuid = TextEditingController(text: s.bleNotifyCharUuid);
 
-    bpmLow = TextEditingController(text: s.thresholds.bpmLow.toStringAsFixed(0));
-    bpmHigh = TextEditingController(text: s.thresholds.bpmHigh.toStringAsFixed(0));
-
-    immobileSec = TextEditingController(text: s.thresholds.immobileSeconds.toString());
-    gyroDeltaEps = TextEditingController(text: s.thresholds.gyroDeltaEps.toString());
-    gyroAbsEps = TextEditingController(text: s.thresholds.gyroAbsEps.toString());
+    // ✅ Store as integers in the UI (even though thresholds are doubles in AppState)
+    bpmLow = TextEditingController(text: s.thresholds.bpmLow.round().toString());
+    bpmHigh = TextEditingController(text: s.thresholds.bpmHigh.round().toString());
   }
 
   @override
@@ -47,20 +40,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
     nameFilter.dispose();
     svcUuid.dispose();
     chrUuid.dispose();
-
     bpmLow.dispose();
     bpmHigh.dispose();
-
-    immobileSec.dispose();
-    gyroDeltaEps.dispose();
-    gyroAbsEps.dispose();
     super.dispose();
+  }
+
+  // ✅ Digits only, no decimals, no minus
+  final _digitsOnly = FilteringTextInputFormatter.digitsOnly;
+
+  int? _parseInt(String s) {
+    final t = s.trim();
+    if (t.isEmpty) return null;
+    return int.tryParse(t);
   }
 
   @override
   Widget build(BuildContext context) {
     final s = context.watch<AppState>();
-    final showGyro = s.showGyroSettings; // MANUAL FLAG (no auto change)
 
     return ListView(
       padding: const EdgeInsets.all(16),
@@ -81,7 +77,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         const SizedBox(height: 8),
         Card(
           child: ListTile(
-            title: const Text('Emergency Contacts'),
+            title: const Text('Emergency Contacts (Email Only)'),
             subtitle: Text('${s.emergencyContacts.length} contact(s)'),
             trailing: const Icon(Icons.chevron_right),
             onTap: () {
@@ -95,9 +91,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
         const SizedBox(height: 20),
         const Text('BLE Config', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
         const SizedBox(height: 8),
-        TextField(controller: nameFilter, decoration: const InputDecoration(labelText: 'Device name filter')),
-        TextField(controller: svcUuid, decoration: const InputDecoration(labelText: 'Service UUID')),
-        TextField(controller: chrUuid, decoration: const InputDecoration(labelText: 'Notify Characteristic UUID')),
+        TextField(
+          controller: nameFilter,
+          decoration: const InputDecoration(labelText: 'Device name filter'),
+        ),
+        TextField(
+          controller: svcUuid,
+          decoration: const InputDecoration(labelText: 'Service UUID'),
+        ),
+        TextField(
+          controller: chrUuid,
+          decoration: const InputDecoration(labelText: 'Notify Characteristic UUID'),
+        ),
 
         const SizedBox(height: 20),
         const Text('Thresholds', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
@@ -106,43 +111,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
         TextField(
           controller: bpmLow,
           keyboardType: TextInputType.number,
-          decoration: const InputDecoration(labelText: 'BPM low (optional alert)'),
+          inputFormatters: [_digitsOnly],
+          decoration: const InputDecoration(
+            labelText: 'BPM lower threshold',
+          ),
         ),
+
         TextField(
           controller: bpmHigh,
           keyboardType: TextInputType.number,
-          decoration: const InputDecoration(labelText: 'BPM high (optional alert)'),
+          inputFormatters: [_digitsOnly],
+          decoration: const InputDecoration(
+            labelText: 'BPM upper threshold',
+          ),
         ),
-
-        const SizedBox(height: 12),
-        SwitchListTile(
-          contentPadding: EdgeInsets.zero,
-          title: const Text('Show gyro settings'),
-          value: showGyro,
-          onChanged: (v) => context.read<AppState>().setShowGyroSettings(v),
-        ),
-
-        if (showGyro) ...[
-          const SizedBox(height: 8),
-          const Text('Gyro-based Inactivity', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
-          const SizedBox(height: 8),
-
-          TextField(
-            controller: immobileSec,
-            keyboardType: TextInputType.number,
-            decoration: const InputDecoration(labelText: 'Immobile seconds'),
-          ),
-          TextField(
-            controller: gyroDeltaEps,
-            keyboardType: TextInputType.number,
-            decoration: const InputDecoration(labelText: 'Gyro delta epsilon'),
-          ),
-          TextField(
-            controller: gyroAbsEps,
-            keyboardType: TextInputType.number,
-            decoration: const InputDecoration(labelText: 'Gyro abs epsilon'),
-          ),
-        ],
 
         const SizedBox(height: 20),
         ElevatedButton(
@@ -153,20 +135,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
             st.bleServiceUuid = svcUuid.text.trim();
             st.bleNotifyCharUuid = chrUuid.text.trim();
 
-            st.thresholds.bpmLow = double.tryParse(bpmLow.text.trim()) ?? st.thresholds.bpmLow;
-            st.thresholds.bpmHigh = double.tryParse(bpmHigh.text.trim()) ?? st.thresholds.bpmHigh;
+            final low = _parseInt(bpmLow.text);
+            final high = _parseInt(bpmHigh.text);
 
-            if (st.showGyroSettings) {
-              st.thresholds.immobileSeconds =
-                  int.tryParse(immobileSec.text.trim()) ?? st.thresholds.immobileSeconds;
-              st.thresholds.gyroDeltaEps =
-                  double.tryParse(gyroDeltaEps.text.trim()) ?? st.thresholds.gyroDeltaEps;
-              st.thresholds.gyroAbsEps =
-                  double.tryParse(gyroAbsEps.text.trim()) ?? st.thresholds.gyroAbsEps;
-            }
+            // ✅ No restrictions: allow low > high, weird values, etc.
+            if (low != null) st.thresholds.bpmLow = low.toDouble();
+            if (high != null) st.thresholds.bpmHigh = high.toDouble();
 
             st.notifyListeners();
-            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Saved')));
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Saved')),
+            );
           },
           child: const Text('Save'),
         ),

@@ -70,15 +70,8 @@ class EmergencyContactsScreen extends StatelessWidget {
   }
 
   static String _subtitle(EmergencyContact c) {
-    final phone = (c.phone == null || c.phone!.trim().isEmpty) ? '—' : c.phone!.trim();
     final email = (c.email == null || c.email!.trim().isEmpty) ? '—' : c.email!.trim();
-    final actions = <String>[
-      if (c.canCall) 'Call',
-      if (c.canSms) 'SMS',
-      if (c.canEmail) 'Email',
-    ].join(', ');
-
-    return 'Phone: $phone\nEmail: $email\nActions: ${actions.isEmpty ? '—' : actions}';
+    return 'Email: $email';
   }
 }
 
@@ -92,12 +85,7 @@ class _EmergencyContactEditDialog extends StatefulWidget {
 
 class _EmergencyContactEditDialogState extends State<_EmergencyContactEditDialog> {
   late final TextEditingController _nameCtrl;
-  late final TextEditingController _phoneCtrl;
   late final TextEditingController _emailCtrl;
-
-  bool _canCall = true;
-  bool _canSms = true;
-  bool _canEmail = false;
 
   @override
   void initState() {
@@ -105,37 +93,31 @@ class _EmergencyContactEditDialogState extends State<_EmergencyContactEditDialog
     final e = widget.existing;
 
     _nameCtrl = TextEditingController(text: e?.name ?? '');
-    _phoneCtrl = TextEditingController(text: e?.phone ?? '');
     _emailCtrl = TextEditingController(text: e?.email ?? '');
-
-    _canCall = e?.canCall ?? true;
-    _canSms = e?.canSms ?? true;
-    _canEmail = e?.canEmail ?? false;
   }
 
   @override
   void dispose() {
     _nameCtrl.dispose();
-    _phoneCtrl.dispose();
     _emailCtrl.dispose();
     super.dispose();
   }
 
   void _save() {
     final name = _nameCtrl.text.trim();
-    if (name.isEmpty) return;
-
-    final phone = _phoneCtrl.text.trim();
     final email = _emailCtrl.text.trim();
+
+    if (name.isEmpty) return;
+    if (email.isEmpty) return; // email is required now
 
     final contact = EmergencyContact(
       id: widget.existing?.id ?? DateTime.now().microsecondsSinceEpoch.toString(),
       name: name,
-      phone: phone.isEmpty ? null : phone,
-      email: email.isEmpty ? null : email,
-      canCall: _canCall,
-      canSms: _canSms,
-      canEmail: _canEmail,
+      phone: null,            // ✅ no phone usage
+      email: email,
+      canCall: false,         // ✅ disabled
+      canSms: false,          // ✅ disabled
+      canEmail: true,         // ✅ always enabled
     );
 
     Navigator.of(context).pop(contact);
@@ -157,33 +139,19 @@ class _EmergencyContactEditDialogState extends State<_EmergencyContactEditDialog
               textInputAction: TextInputAction.next,
             ),
             TextField(
-              controller: _phoneCtrl,
-              decoration: const InputDecoration(labelText: 'Phone (optional)'),
-              keyboardType: TextInputType.phone,
-              textInputAction: TextInputAction.next,
-            ),
-            TextField(
               controller: _emailCtrl,
-              decoration: const InputDecoration(labelText: 'Email (optional)'),
+              decoration: const InputDecoration(labelText: 'Email'),
               keyboardType: TextInputType.emailAddress,
               textInputAction: TextInputAction.done,
               onSubmitted: (_) => _save(),
             ),
-            const SizedBox(height: 12),
-            SwitchListTile(
-              title: const Text('Allow Call'),
-              value: _canCall,
-              onChanged: (v) => setState(() => _canCall = v),
-            ),
-            SwitchListTile(
-              title: const Text('Allow SMS'),
-              value: _canSms,
-              onChanged: (v) => setState(() => _canSms = v),
-            ),
-            SwitchListTile(
-              title: const Text('Allow Email'),
-              value: _canEmail,
-              onChanged: (v) => setState(() => _canEmail = v),
+            const SizedBox(height: 8),
+            const Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'This app uses real SMTP email sending.\nEmail is required.',
+                style: TextStyle(fontSize: 12, color: Colors.grey),
+              ),
             ),
           ],
         ),

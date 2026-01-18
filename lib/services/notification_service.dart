@@ -15,6 +15,15 @@ class NotificationService {
         ?.requestNotificationsPermission();
   }
 
+  // ✅ Always returns a valid 32-bit signed notification ID
+  int _safeId() {
+    // max signed 32-bit int = 2147483647
+    final id = DateTime.now().millisecondsSinceEpoch % 2147483647;
+
+    // avoid 0 (just to be safe)
+    return id == 0 ? 1 : id;
+  }
+
   Future<void> showAlert({required String title, required String body}) async {
     const androidDetails = AndroidNotificationDetails(
       'safewear_alerts',
@@ -24,9 +33,14 @@ class NotificationService {
       priority: Priority.high,
     );
 
-    // Avoid ID collisions
-    final id = DateTime.now().millisecondsSinceEpoch;
+    // ✅ FIX: must fit in 32-bit int
+    final id = _safeId();
 
-    await _plugin.show(id, title, body, const NotificationDetails(android: androidDetails));
+    await _plugin.show(
+      id,
+      title,
+      body,
+      const NotificationDetails(android: androidDetails),
+    );
   }
 }

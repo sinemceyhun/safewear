@@ -77,31 +77,41 @@ class EmergencyActionsSheet extends StatelessWidget {
           children: [
             Text(c.name, style: const TextStyle(fontWeight: FontWeight.w600)),
             const SizedBox(height: 6),
+
             Wrap(
               spacing: 8,
               runSpacing: 8,
               children: [
-                if (c.canCall && (c.phone?.trim().isNotEmpty ?? false))
+                // ✅ ONLY EMAIL ACTION (real SMTP via AppState -> EmergencyActionService -> EmailService)
+                if ((c.email?.trim().isNotEmpty ?? false))
                   OutlinedButton.icon(
-                    onPressed: () => s.emergencyCall(c),
-                    icon: const Icon(Icons.call),
-                    label: const Text('Call'),
-                  ),
-                if (c.canSms && (c.phone?.trim().isNotEmpty ?? false))
-                  OutlinedButton.icon(
-                    onPressed: () => s.emergencySms(c, msg),
-                    icon: const Icon(Icons.sms),
-                    label: const Text('SMS'),
-                  ),
-                if (c.canEmail && (c.email?.trim().isNotEmpty ?? false))
-                  OutlinedButton.icon(
-                    onPressed: () => s.emergencyEmail(
-                      c,
-                      subject: 'SafeWear Emergency',
-                      body: msg,
-                    ),
+                    onPressed: () async {
+                      try {
+                        await s.emergencyEmail(
+                          c,
+                          subject: 'SafeWear Emergency',
+                          body: msg,
+                        );
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('Email sent')),
+                          );
+                        }
+                      } catch (e) {
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(content: Text('Email failed: $e')),
+                          );
+                        }
+                      }
+                    },
                     icon: const Icon(Icons.email),
                     label: const Text('Email'),
+                  )
+                else
+                  const Text(
+                    'No email for this contact.',
+                    style: TextStyle(color: Colors.grey),
                   ),
               ],
             ),

@@ -26,10 +26,14 @@ class MockSensorStream implements SensorStream {
 
       // Rare alarms
       final r = _rng.nextDouble();
+
+      // ✅ FIXED:
+      // 2 => manual
+      // 1 => fall
       final alarm = (r < 0.01)
-          ? 1 // manual
+          ? 2 // manual
           : (r < 0.02)
-          ? 2 // fall
+          ? 1 // fall
           : 0;
 
       // Sometimes provide gyro, sometimes not
