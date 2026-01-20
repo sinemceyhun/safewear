@@ -12,13 +12,14 @@ class DashboardScreen extends StatelessWidget {
       case 0:
         return '0 (None)';
       case 1:
-        return '1 (Manual / Button)';
+        return '1 (Fall)';
       case 2:
-        return '2 (Fall)';
+        return '2 (Manual / Button)';
       default:
         return '$alarm (Unknown)';
     }
   }
+
 
   @override
   Widget build(BuildContext context) {
@@ -53,7 +54,6 @@ class DashboardScreen extends StatelessWidget {
                 const SizedBox(height: 12),
                 _kv('BPM', sample != null ? sample.bpm.toStringAsFixed(1) : '—'),
                 _kv('Alarm', sample != null ? _alarmText(sample.alarm) : '—'),
-                _kv('GyroMag', sample?.gyroMag != null ? sample!.gyroMag!.toStringAsFixed(3) : '—'),
                 _kv('Timestamp', sample?.ts.toIso8601String() ?? '—'),
               ],
             ),
@@ -111,7 +111,7 @@ class DashboardScreen extends StatelessWidget {
           icon: const Icon(Icons.warning_amber),
           label: const Text('Emergency'),
           onPressed: () async {
-            const reason = 'In-app emergency button';
+            const reason = 'Manuel Buton';
             await context.read<AppState>().triggerEmergency(reason: reason);
 
             if (!context.mounted) return;

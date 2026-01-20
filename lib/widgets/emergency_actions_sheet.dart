@@ -89,7 +89,7 @@ class EmergencyActionsSheet extends StatelessWidget {
                       try {
                         await s.emergencyEmail(
                           c,
-                          subject: 'SafeWear Emergency',
+                          subject: '🚨 SafeWear ACİL DURUM:',
                           body: msg,
                         );
                         if (context.mounted) {

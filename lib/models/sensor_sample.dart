@@ -6,12 +6,14 @@ class SensorSample {
 
   // Required (current payload)
   final double bpm; // e.g., 72.5
-  final int alarm;  // 0 none, 1 manual(button), 2 fall
 
-  // Optional (future payload)
+  // ✅ FIXED mapping:
+  // 0 none
+  // 1 fall
+  // 2 manual(button)
+  final int alarm;
+
   final double? gx, gy, gz;
-
-  // Keep raw for debugging / forward compatibility
   final Map<String, dynamic>? raw;
 
   const SensorSample({

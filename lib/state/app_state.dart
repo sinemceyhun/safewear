@@ -172,7 +172,12 @@ class AppState extends ChangeNotifier {
 
     _mockTimer = Timer.periodic(const Duration(milliseconds: 800), (_) {
       final bpm = 65 + rnd.nextInt(40) + rnd.nextDouble(); // 65-105.x
-      final alarm = (rnd.nextDouble() < 0.02) ? 2 : 0; // rare fall alarm
+      final r = rnd.nextDouble();
+      final alarm = (r < 0.02)
+          ? 2 // ✅ manual
+          : (r < 0.04)
+          ? 1 // ✅ fall
+          : 0;
 
       // Sometimes include gyro to exercise inactivity
       final includeGyro = rnd.nextDouble() < 0.6;
@@ -286,69 +291,6 @@ class AppState extends ChangeNotifier {
   // -------------------------
   // Emergency message + HTML email building
   // -------------------------
-  String buildEmergencyMessage({required String reason}) {
-    final bpm = latest?.bpm;
-    final alarm = latest?.alarm;
-    final gmag = latest?.gyroMag;
-
-    return [
-      'SafeWear Emergency',
-      'Reason: $reason',
-      'Time: ${DateTime.now().toIso8601String()}',
-      'BPM: ${bpm != null ? bpm.toStringAsFixed(1) : '-'}',
-      'Alarm: ${alarm ?? '-'}',
-      'GyroMag: ${gmag != null ? gmag.toStringAsFixed(3) : '-'}',
-    ].join('\n');
-  }
-
-  String _escapeHtml(String s) {
-    return s
-        .replaceAll('&', '&amp;')
-        .replaceAll('<', '&lt;')
-        .replaceAll('>', '&gt;');
-  }
-
-  String buildEmergencyEmailHtml({
-    required String reason,
-    required String detailsPlain,
-  }) {
-    final safeReason = _escapeHtml(reason);
-    final safeDetails = _escapeHtml(detailsPlain).replaceAll('\n', '<br>');
-
-    final now = DateTime.now();
-    final timeStr =
-        '${now.day.toString().padLeft(2, '0')}.${now.month.toString().padLeft(2, '0')}.${now.year} '
-        '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
-
-    return '''
-<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-  <div style="background: linear-gradient(135deg, #FF1744, #D50000); color: white; padding: 18px; border-radius: 10px 10px 0 0;">
-    <h2 style="margin: 0;">🚨 SafeWear ACİL DURUM</h2>
-  </div>
-
-  <div style="background: #f5f5f5; padding: 18px; border-radius: 0 0 10px 10px;">
-    <table style="width: 100%; border-collapse: collapse;">
-      <tr>
-        <td style="padding: 10px; border-bottom: 1px solid #ddd;"><b>Neden</b></td>
-        <td style="padding: 10px; border-bottom: 1px solid #ddd;">$safeReason</td>
-      </tr>
-      <tr>
-        <td style="padding: 10px; border-bottom: 1px solid #ddd;"><b>Zaman</b></td>
-        <td style="padding: 10px; border-bottom: 1px solid #ddd;">$timeStr</td>
-      </tr>
-      <tr>
-        <td style="padding: 10px; vertical-align: top;"><b>Detay</b></td>
-        <td style="padding: 10px;">$safeDetails</td>
-      </tr>
-    </table>
-
-    <p style="color: #666; font-size: 12px; margin-top: 16px; text-align: center;">
-      Bu mesaj SafeWear uygulaması tarafından otomatik gönderilmiştir.
-    </p>
-  </div>
-</div>
-''';
-  }
 
   String buildHealthWarningEmailHtml({
     required String title,
@@ -424,11 +366,78 @@ class AppState extends ChangeNotifier {
   }
 
 
+  // -------------------------
+// Emergency message + HTML email building
+// -------------------------
+  String buildEmergencyMessage({required String reason}) {
+    final bpm = latest?.bpm;
+    final alarm = latest?.alarm;
+
+    return [
+      'SafeWear Emergency',
+      'Reason: $reason',
+      'Time: ${DateTime.now().toIso8601String()}',
+      'BPM: ${bpm != null ? bpm.toStringAsFixed(1) : '-'}',
+      'Alarm: ${alarm ?? '-'}',
+    ].join('\n');
+  }
+
+  String _escapeHtml(String s) {
+    return s
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;');
+  }
+
+// ✅ SENİN İSTEDİĞİN TEMPLATE (AYNEN)
+  String buildEmergencyEmailHtml({
+    required String reason,
+    required String detailsPlain,
+  }) {
+    final safeReason = _escapeHtml(reason);
+    final safeDetails = _escapeHtml(detailsPlain).replaceAll('\n', '<br>');
+
+    final now = DateTime.now();
+    final timeStr =
+        '${now.day.toString().padLeft(2, '0')}.${now.month.toString().padLeft(2, '0')}.${now.year} '
+        '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
+
+    return '''
+<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+  <div style="background: linear-gradient(135deg, #FF1744, #D50000); color: white; padding: 18px; border-radius: 10px 10px 0 0;">
+    <h2 style="margin: 0;">🚨 SafeWear ACİL DURUM</h2>
+  </div>
+
+  <div style="background: #f5f5f5; padding: 18px; border-radius: 0 0 10px 10px;">
+    <table style="width: 100%; border-collapse: collapse;">
+      <tr>
+        <td style="padding: 10px; border-bottom: 1px solid #ddd;"><b>Neden</b></td>
+        <td style="padding: 10px; border-bottom: 1px solid #ddd;">$safeReason</td>
+      </tr>
+      <tr>
+        <td style="padding: 10px; border-bottom: 1px solid #ddd;"><b>Zaman</b></td>
+        <td style="padding: 10px; border-bottom: 1px solid #ddd;">$timeStr</td>
+      </tr>
+      <tr>
+        <td style="padding: 10px; vertical-align: top;"><b>Detay</b></td>
+        <td style="padding: 10px;">$safeDetails</td>
+      </tr>
+    </table>
+
+    <p style="color: #666; font-size: 12px; margin-top: 16px; text-align: center;">
+      Bu mesaj SafeWear uygulaması tarafından otomatik gönderilmiştir.
+    </p>
+  </div>
+</div>
+''';
+  }
+
+// ✅ Bütün contact’lara EMAIL (aynı template)
   void _sendEmergencyEmailToAll({
     required String reason,
     required String detailsPlain,
   }) {
-    // Cooldown (anti-spam)
+    // anti-spam
     if (!_allowEmit('EMAIL_EMERGENCY', minSeconds: 20)) return;
 
     final contactsWithEmail = emergencyContacts
@@ -437,20 +446,21 @@ class AppState extends ChangeNotifier {
 
     if (contactsWithEmail.isEmpty) return;
 
-    final subject = '🚨 SafeWear ACİL DURUM: $reason';
+    final subject = '🚨 SafeWear ACİL DURUM:';
+
+    // ✅ TEMPLATE BURADA
     final html = buildEmergencyEmailHtml(
       reason: reason,
       detailsPlain: detailsPlain,
     );
 
-    // Send one-by-one (safe for any email service structure)
     for (final c in contactsWithEmail) {
       unawaited(
         _actionSvc
             .email(
           c,
           subject: subject,
-          bodyHtml: html, // ✅ IMPORTANT: bodyHtml
+          bodyHtml: html, // ✅ hep aynı HTML
         )
             .catchError((e) {
           debugPrint('[SafeWear] Email send failed to ${c.email}: $e');
@@ -459,6 +469,7 @@ class AppState extends ChangeNotifier {
     }
   }
 
+// ✅ In-app emergency BUTONUNUN çağırdığı yer burası
   Future<void> triggerEmergency({required String reason}) async {
     final msg = buildEmergencyMessage(reason: reason);
 
@@ -470,27 +481,31 @@ class AppState extends ChangeNotifier {
       body: reason,
     );
 
-    // ✅ REAL EMAIL (SMTP)
+    // ✅ In-app buton maili de aynı template ile gidecek
     _sendEmergencyEmailToAll(
       reason: reason,
       detailsPlain: msg,
     );
   }
 
-  // ✅ Only email manual send (no SMS, no call)
+// ✅ Sheet içinden “Email”e basınca da AYNI TEMPLATE gitsin
   Future<void> emergencyEmail(
       EmergencyContact c, {
         required String subject,
         required String body,
       }) {
-    final html = '<pre style="font-family: Arial, sans-serif;">${_escapeHtml(body)}</pre>';
+    final html = buildEmergencyEmailHtml(
+      reason: subject,      // ya da "Manuel gönderim" yazabilirsin
+      detailsPlain: body,
+    );
 
     return _actionSvc.email(
       c,
       subject: subject,
-      bodyHtml: html, // ✅ IMPORTANT: bodyHtml
+      bodyHtml: html,
     );
   }
+
 
   // -------------------------
   // Alerts / detection
@@ -521,8 +536,8 @@ class AppState extends ChangeNotifier {
     // ✅ NEW MAPPING:
     // 1 = FALL, 2 = MANUAL
     final reason = (alarm == 2)
-        ? 'Wearable: Manuel Acil (Buton)'
-        : 'Wearable: Düşme Algılandı';
+        ? 'Manuel Buton'
+        : 'Düşme Algılandı';
 
     // Cooldown 10s
     final now = DateTime.now();
@@ -637,9 +652,6 @@ class AppState extends ChangeNotifier {
       }
     }
 
-
-    // 3) Optional: Inactivity (only if gyro exists)
-    _updateMotionFromGyroIfPresent(s);
 
     notifyListeners();
   }
