@@ -350,6 +350,80 @@ class AppState extends ChangeNotifier {
 ''';
   }
 
+  String buildHealthWarningEmailHtml({
+    required String title,
+    required String subtitle,
+    required String detailsPlain,
+  }) {
+    String esc(String s) => s
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;');
+
+    final safeTitle = esc(title);
+    final safeSubtitle = esc(subtitle);
+    final safeDetails = esc(detailsPlain).replaceAll('\n', '<br>');
+
+    final now = DateTime.now();
+    final timeStr =
+        '${now.day.toString().padLeft(2, '0')}.${now.month.toString().padLeft(2, '0')}.${now.year} '
+        '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
+
+    return '''
+<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+  <div style="background: linear-gradient(135deg, #FFB300, #FB8C00); color: white; padding: 18px; border-radius: 10px 10px 0 0;">
+    <h2 style="margin: 0;">⚠️ $safeTitle</h2>
+    <div style="margin-top: 6px; font-size: 13px; opacity: 0.95;">$safeSubtitle</div>
+  </div>
+
+  <div style="background: #f6f6f6; padding: 18px; border-radius: 0 0 10px 10px;">
+    <table style="width: 100%; border-collapse: collapse;">
+      <tr>
+        <td style="padding: 10px; border-bottom: 1px solid #ddd;"><b>Zaman</b></td>
+        <td style="padding: 10px; border-bottom: 1px solid #ddd;">$timeStr</td>
+      </tr>
+      <tr>
+        <td style="padding: 10px; vertical-align: top;"><b>Detay</b></td>
+        <td style="padding: 10px;">$safeDetails</td>
+      </tr>
+    </table>
+
+    <p style="color: #666; font-size: 12px; margin-top: 16px; text-align: center;">
+      Bu mesaj SafeWear tarafından otomatik gönderilmiştir.
+    </p>
+  </div>
+</div>
+''';
+  }
+
+  void _sendHealthWarningEmailToAll({
+    required String typeKey,      // e.g. 'EMAIL_HR_LOW'
+    required int cooldownSeconds, // anti-spam
+    required String subject,
+    required String html,
+  }) {
+    if (!_allowEmit(typeKey, minSeconds: cooldownSeconds)) return;
+
+    final contactsWithEmail = emergencyContacts
+        .where((c) => (c.email?.trim().isNotEmpty ?? false))
+        .toList();
+
+    if (contactsWithEmail.isEmpty) return;
+
+    for (final c in contactsWithEmail) {
+      unawaited(
+        _actionSvc.email(
+          c,
+          subject: subject,
+          bodyHtml: html,
+        ).catchError((e) {
+          debugPrint('[SafeWear] Health warning email failed to ${c.email}: $e');
+        }),
+      );
+    }
+  }
+
+
   void _sendEmergencyEmailToAll({
     required String reason,
     required String detailsPlain,
@@ -444,7 +518,9 @@ class AppState extends ChangeNotifier {
 
     if (alarm == 0) return;
 
-    final reason = (alarm == 1)
+    // ✅ NEW MAPPING:
+    // 1 = FALL, 2 = MANUAL
+    final reason = (alarm == 2)
         ? 'Wearable: Manuel Acil (Buton)'
         : 'Wearable: Düşme Algılandı';
 
@@ -457,6 +533,7 @@ class AppState extends ChangeNotifier {
     _lastEmergencyTs = now;
     unawaited(triggerEmergency(reason: reason));
   }
+
 
   void _updateMotionFromGyroIfPresent(SensorSample s) {
     if (!s.hasGyro) return;
@@ -519,15 +596,47 @@ class AppState extends ChangeNotifier {
 
     // 2) Optional: HR alerts based on bpm (still useful)
     if (_allowEmit('BPM_CHECK', minSeconds: 1)) {
-      if (s.bpm <= thresholds.bpmLow &&
-          _allowEmit('HR_LOW', minSeconds: 15)) {
-        unawaited(_emitAlert('HR_LOW', 'Low BPM: ${s.bpm.toStringAsFixed(1)}'));
-      } else if (s.bpm >= thresholds.bpmHigh &&
-          _allowEmit('HR_HIGH', minSeconds: 15)) {
-        unawaited(
-            _emitAlert('HR_HIGH', 'High BPM: ${s.bpm.toStringAsFixed(1)}'));
+      final bpmNow = s.bpm;
+
+      if (bpmNow <= thresholds.bpmLow && _allowEmit('HR_LOW', minSeconds: 15)) {
+        final reason = 'HR LOW';
+        final msg = buildEmergencyMessage(reason: reason);
+
+        unawaited(_emitAlert('HR_LOW', 'Low BPM: ${bpmNow.toStringAsFixed(1)}'));
+
+        final html = buildHealthWarningEmailHtml(
+          title: 'Düşük Nabız Uyarısı',
+          subtitle: 'BPM: ${bpmNow.toStringAsFixed(1)} | Limit: ${thresholds.bpmLow.round()}',
+          detailsPlain: msg,
+        );
+
+        _sendHealthWarningEmailToAll(
+          typeKey: 'EMAIL_HR_LOW',
+          cooldownSeconds: 60, // mail spam olmasın
+          subject: '⚠️ SafeWear: Düşük Nabız (HR_LOW)',
+          html: html,
+        );
+      } else if (bpmNow >= thresholds.bpmHigh && _allowEmit('HR_HIGH', minSeconds: 15)) {
+        final reason = 'HR HIGH';
+        final msg = buildEmergencyMessage(reason: reason);
+
+        unawaited(_emitAlert('HR_HIGH', 'High BPM: ${bpmNow.toStringAsFixed(1)}'));
+
+        final html = buildHealthWarningEmailHtml(
+          title: 'Yüksek Nabız Uyarısı',
+          subtitle: 'BPM: ${bpmNow.toStringAsFixed(1)} | Limit: ${thresholds.bpmHigh.round()}',
+          detailsPlain: msg,
+        );
+
+        _sendHealthWarningEmailToAll(
+          typeKey: 'EMAIL_HR_HIGH',
+          cooldownSeconds: 60,
+          subject: '⚠️ SafeWear: Yüksek Nabız (HR_HIGH)',
+          html: html,
+        );
       }
     }
+
 
     // 3) Optional: Inactivity (only if gyro exists)
     _updateMotionFromGyroIfPresent(s);
